@@ -501,7 +501,8 @@
     if (!projectData) return;
     showStatus("Converting all plates and packing ZIP archive...");
     try {
-      const resp = await fetch(`/api/convert_all?filename=${encodeURIComponent(projectData.server_filename)}`);
+      const q = `filename=${encodeURIComponent(projectData.server_filename)}&session_id=${encodeURIComponent(projectData.session_id || '')}`;
+      const resp = await fetch(`/api/convert_all?${q}`);
       if (!resp.ok) {
         showStatus("Error converting plates", false);
         return;
@@ -523,7 +524,8 @@
     if (!projectData) return;
     showStatus(`Converting Plate ${plateId} for Snapmaker U1...`);
     try {
-      const resp = await fetch(`/api/convert_plate?filename=${encodeURIComponent(projectData.server_filename)}&plate=${plateId}`);
+      const q = `filename=${encodeURIComponent(projectData.server_filename)}&plate=${plateId}&session_id=${encodeURIComponent(projectData.session_id || '')}`;
+      const resp = await fetch(`/api/convert_plate?${q}`);
       if (!resp.ok) {
         showStatus(`Error converting Plate ${plateId}`, false);
         return;
