@@ -32,8 +32,8 @@ Original single-plate tools force you to pick only 4 filaments for the entire pr
 ### 2. Run with Python
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/bambu2u1-multiplate.git
-cd bambu2u1-multiplate
+git clone https://github.com/bradhoschar/Bambu2U1_MultiPlate.git
+cd Bambu2U1_MultiPlate
 
 # Install dependencies
 pip install -r requirements.txt
