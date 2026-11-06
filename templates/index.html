@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bambu2U1 — Multi-Plate Converter for Snapmaker U1</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --card-hover: #1c2128;
+      --border: #30363d;
+      --border-accent: #388bfd;
+      --u1-teal: #00d2d3;
+      --u1-teal-glow: rgba(0, 210, 211, 0.25);
+      --bambu-green: #00ae42;
+      --text: #f0f6fc;
+      --text-muted: #8b949e;
+      --btn-green: #238636;
+      --btn-green-hover: #2ea043;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 30px 20px;
+    }
+
+    .wrapper {
+      max-width: 1050px;
+      width: 100%;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+
+    .brand-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(0, 210, 211, 0.1);
+      border: 1px solid rgba(0, 210, 211, 0.3);
+      color: var(--u1-teal);
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      letter-spacing: 0.5px;
+    }
+
+    h1 {
+      font-size: 32px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin-bottom: 8px;
+    }
+    h1 span.bambu { color: var(--bambu-green); }
+    h1 span.arrow { color: var(--text-muted); font-size: 24px; vertical-align: middle; }
+    h1 span.u1 { color: var(--u1-teal); }
+
+    .tagline {
+      color: var(--text-muted);
+      font-size: 15px;
+      max-width: 620px;
+      margin: 0 auto;
+    }
+
+    /* Drag and drop zone */
+    .dropzone {
+      background: var(--card-bg);
+      border: 2px dashed var(--border);
+      border-radius: 16px;
+      padding: 44px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      margin-bottom: 24px;
+      position: relative;
+    }
+
+    .dropzone:hover, .dropzone.dragover {
+      border-color: var(--u1-teal);
+      background: #181e28;
+      box-shadow: 0 0 20px var(--u1-teal-glow);
+    }
+
+    .dropzone svg {
+      width: 52px;
+      height: 52px;
+      fill: var(--u1-teal);
+      margin-bottom: 12px;
+    }
+
+    .drop-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .drop-subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    /* Status Bar / Spinner */
+    .status-panel {
+      display: none;
+      text-align: center;
+      padding: 18px;
+      margin-bottom: 24px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(255,255,255,0.2);
+      border-top-color: var(--u1-teal);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Project Summary Bar */
+    .project-header {
+      display: none;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px 24px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .project-info h2 {
+      font-size: 19px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .meta-pills {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .pill {
+      font-size: 12px;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-weight: 500;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+    .pill.highlight {
+      background: rgba(0, 210, 211, 0.12);
+      border-color: rgba(0, 210, 211, 0.4);
+      color: var(--u1-teal);
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s ease;
+      text-decoration: none;
+    }
+    .btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+    .btn-zip {
+      background: var(--btn-green);
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(35, 134, 54, 0.3);
+      padding: 12px 26px;
+      font-size: 15px;
+    }
+    .btn-zip:hover { background: var(--btn-green-hover); }
+
+    .btn-export {
+      background: rgba(0, 210, 211, 0.15);
+      border: 1px solid rgba(0, 210, 211, 0.4);
+      color: var(--u1-teal);
+      width: 100%;
+      justify-content: center;
+      margin-top: 14px;
+    }
+    .btn-export:hover {
+      background: var(--u1-teal);
+      color: #000;
+    }
+
+    /* Grid of Plates */
+    .plates-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+      gap: 20px;
+    }
+
+    .plate-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+    .plate-card:hover {
+      border-color: #484f58;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+    }
+
+    .plate-thumb-container {
+      width: 100%;
+      height: 160px;
+      background: #090c10;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      margin-bottom: 14px;
+      border: 1px solid rgba(255,255,255,0.05);
+    }
+
+    .plate-thumb {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+
+    .plate-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+
+    .plate-title {
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .plate-parts-count {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .parts-preview {
+      font-size: 11px;
+      color: #7d8590;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 14px;
+      line-height: 1.4;
+    }
+
+    /* Slot Mapping Row */
+    .slot-mappings {
+      background: rgba(0,0,0,0.25);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 4px;
+    }
+
+    .slot-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 0;
+      font-size: 12px;
+    }
+
+    .slot-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.4);
+      display: inline-block;
+    }
+
+    .slot-badge {
+      background: rgba(0, 210, 211, 0.15);
+      color: var(--u1-teal);
+      border: 1px solid rgba(0, 210, 211, 0.3);
+      padding: 2px 7px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 11px;
+    }
+
+    footer {
+      text-align: center;
+      margin-top: 40px;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+    footer a { color: var(--u1-teal); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+<div class="wrapper">
+  <header>
+    <div class="brand-badge">⚡ SNAPMAKER U1 COMPATIBILITY SUITE</div>
+    <h1>Bambu <span class="arrow">&rarr;</span> <span class="u1">Snapmaker U1</span> Multi-Plate</h1>
+    <p class="tagline">Convert complex multi-plate & 12+ color Bambu / MakerWorld 3MF projects into individual, perfectly centered Snapmaker U1-ready print plates.</p>
+  </header>
+
+  <!-- Upload Dropzone -->
+  <div class="dropzone" id="dropzone" onclick="document.getElementById('fileInput').click()">
+    <svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
+    <div class="drop-title">Drop your Bambu .3mf project file here</div>
+    <div class="drop-subtitle">or click to browse files from your computer (supports up to 500 MB)</div>
+    <input type="file" id="fileInput" accept=".3mf" style="display:none">
+  </div>
+
+  <!-- Loading / Status Banner -->
+  <div class="status-panel" id="statusPanel">
+    <span class="spinner" id="spinner"></span>
+    <span id="statusMessage">Processing...</span>
+  </div>
+
+  <!-- Project Header & Global Convert -->
+  <div class="project-header" id="projectHeader">
+    <div class="project-info">
+      <h2 id="projectName">Model.3mf</h2>
+      <div class="meta-pills" id="projectMetaPills"></div>
+    </div>
+    <button class="btn btn-zip" onclick="convertAllPlates()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+      Convert & Download All Plates (.zip)
+    </button>
+  </div>
+
+  <!-- Plates Grid -->
+  <div class="plates-grid" id="platesGrid"></div>
+
+  <footer>
+    Made for the Snapmaker U1 3D printing community &bull; Open Source on <a href="https://github.com" target="_blank">GitHub</a>
+  </footer>
+</div>
+
+<script>
+  let currentFile = null;
+  let projectData = null;
+
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const statusPanel = document.getElementById('statusPanel');
+  const statusMessage = document.getElementById('statusMessage');
+  const projectHeader = document.getElementById('projectHeader');
+  const platesGrid = document.getElementById('platesGrid');
+
+  dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+  dropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length) handleFile(fileInput.files[0]);
+  });
+
+  function showStatus(msg, isSpinning = true) {
+    statusPanel.style.display = 'block';
+    statusMessage.innerText = msg;
+    document.getElementById('spinner').style.display = isSpinning ? 'inline-block' : 'none';
+  }
+  function hideStatus() {
+    statusPanel.style.display = 'none';
+  }
+
+  async function handleFile(file) {
+    if (!file.name.toLowerCase().endsWith('.3mf')) {
+      alert("Please upload a .3mf project file.");
+      return;
+    }
+    currentFile = file;
+    showStatus("Inspecting plates, parts, and multi-color filaments...");
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const resp = await fetch('/api/analyze', { method: 'POST', body: formData });
+      const data = await resp.json();
+      if (!resp.ok || data.error) {
+        showStatus("Error analyzing file: " + (data.error || "Unknown"), false);
+        return;
+      }
+      projectData = data;
+      hideStatus();
+      renderProject(data);
+    } catch (err) {
+      showStatus("Upload failed: " + err.message, false);
+    }
+  }
+
+  function renderProject(data) {
+    projectHeader.style.display = 'flex';
+    document.getElementById('projectName').innerText = data.filename;
+
+    const pillsContainer = document.getElementById('projectMetaPills');
+    pillsContainer.innerHTML = `
+      <span class="pill highlight">${data.plates_count} Plates Detected</span>
+      <span class="pill">${data.total_filaments} Total Colors in Project</span>
+      <span class="pill">${data.has_support ? "Supports: Tree/Auto Enabled" : "Supports: Off"}</span>
+      <span class="pill">Snapmaker U1 270x270 Bed</span>
+    `;
+
+    platesGrid.innerHTML = "";
+    data.plates.forEach(plate => {
+      const card = document.createElement('div');
+      card.className = 'plate-card';
+
+      const thumbSrc = plate.thumbnail_b64 ? `data:image/png;base64,${plate.thumbnail_b64}` : '';
+      const thumbHtml = thumbSrc 
+        ? `<img class="plate-thumb" src="${thumbSrc}" alt="${plate.name}"/>` 
+        : `<div style="color:var(--text-muted);font-size:12px;">No Plate Thumbnail</div>`;
+
+      // Build slot mappings rows
+      let slotRowsHtml = '';
+      plate.filaments.slice(0, 4).forEach((fil, idx) => {
+        const u1Slot = idx + 1;
+        slotRowsHtml += `
+          <div class="slot-row">
+            <div class="slot-left">
+              <span class="swatch" style="background:${fil.color}"></span>
+              <span>Original Extruder #${fil.original_slot} (${fil.type})</span>
+            </div>
+            <span class="slot-badge">U1 Slot ${u1Slot}</span>
+          </div>
+        `;
+      });
+
+      const partsPreview = plate.objects.slice(0, 4).join(', ') + (plate.objects.length > 4 ? ` + ${plate.objects.length - 4} more` : '');
+
+      card.innerHTML = `
+        <div class="plate-thumb-container">${thumbHtml}</div>
+        <div class="plate-header">
+          <div class="plate-title">Plate ${plate.id}</div>
+          <div class="plate-parts-count">${plate.objects_count} parts</div>
+        </div>
+        <div class="parts-preview" title="${plate.objects.join(', ')}">${partsPreview}</div>
+        
+        <div class="slot-mappings">
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;font-weight:600;">ACTIVE FILAMENT ASSIGNMENTS:</div>
+          ${slotRowsHtml}
+        </div>
+
+        <button class="btn btn-export" onclick="convertSinglePlate(${plate.id})">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+          Export Plate ${plate.id} for U1
+        </button>
+      `;
+
+      platesGrid.appendChild(card);
+    });
+  }
+
+  async function convertAllPlates() {
+    if (!projectData) return;
+    showStatus("Converting all plates and packing ZIP archive...");
+    try {
+      const resp = await fetch(`/api/convert_all?filename=${encodeURIComponent(projectData.server_filename)}`);
+      if (!resp.ok) {
+        showStatus("Error converting plates", false);
+        return;
+      }
+      const blob = await resp.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${projectData.filename.replace('.3mf','')}_Snapmaker_U1_All_Plates.zip`;
+      a.click();
+      showStatus("All plates successfully converted and downloaded!", false);
+      setTimeout(hideStatus, 4000);
+    } catch (e) {
+      showStatus("Conversion error: " + e.message, false);
+    }
+  }
+
+  async function convertSinglePlate(plateId) {
+    if (!projectData) return;
+    showStatus(`Converting Plate ${plateId} for Snapmaker U1...`);
+    try {
+      const resp = await fetch(`/api/convert_plate?filename=${encodeURIComponent(projectData.server_filename)}&plate=${plateId}`);
+      if (!resp.ok) {
+        showStatus(`Error converting Plate ${plateId}`, false);
+        return;
+      }
+      const blob = await resp.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${projectData.filename.replace('.3mf','')}_U1_Plate_${plateId}.3mf`;
+      a.click();
+      showStatus(`Plate ${plateId} downloaded successfully!`, false);
+      setTimeout(hideStatus, 3000);
+    } catch (e) {
+      showStatus("Plate export error: " + e.message, false);
+    }
+  }
+</script>
+</body>
+</html>
