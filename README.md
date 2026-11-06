@@ -74,21 +74,21 @@ docker run -d -p 5000:5000 --name bambu2u1 bambu2u1
 4. **Prime Tower Cleanup**: Bambu Studio projects often bundle global variable layer height curves (`layer_heights_profile.txt`) that cause OrcaSlicer to throw `"The prime tower is only supported if all objects have the same variable layer height"`. Bambu2U1 strips incompatible profiles so the prime tower generates cleanly.
 5. **Snapmaker U1 Machine Profile Injection**: Applies the official Snapmaker U1 machine definitions, printable volume (`0.5x1` to `270.5x271`), and PLA SnapSpeed settings.
 
-[!IMPORTANT]
+> [!IMPORTANT]
     > **Pre-Processor for Snapmaker Orca:** Bambu2U1 is a pre-processor, not a slicer replacement. It fixes MakerWorld canvas offsets, strips prime-tower conflicts, and
     translates Bambu project files into clean Snapmaker U1 `.3mf` files ready to slice.
-    >
-    > **Hardware Color Limits (Important Distinction):**
-    > * The Snapmaker U1 has **4 physical spool slots / toolheads**. Bambu2U1 does **not** allow 12 colors on a single plate.
-    > * Instead, it supports **multi-plate projects containing 12+ total colors** by isolating each plate independently. Each individual plate uses up to 4 colors and
-    maps them into U1 Slots 1–4.
-    >
-    > | Plate | Original Bambu Colors Used | Exported U1 Slots (Filaments to load for print) |
-    > | :--- | :--- | :--- |
-    > | **Plate 1 (Head & Mask)** | Yellow, Black, White, Blue | Slot 1: Yellow, Slot 2: Black, Slot 3: White, Slot 4: Blue |
-    > | **Plate 2 (Base & Claws)** | Silver, Red, Dark Grey, Gold | Slot 1: Silver, Slot 2: Red, Slot 3: Dark Grey, Slot 4: Gold |
-    >
-    > *Between plate print jobs, you simply swap the 4 spools on your U1 to match that plate's slot assignments!*
+
+    ### 🎨 Hardware Color Limits (Important Distinction)
+    * The Snapmaker U1 has **4 physical spool slots / toolheads**. Bambu2U1 does **not** allow 12 colors on a single plate.
+    * Instead, it supports **multi-plate projects containing 12+ total colors** by isolating each plate independently. Each individual plate uses up to 4 colors and maps
+    them into U1 Slots 1–4.
+
+    | Plate | Original Bambu Colors Used | Exported U1 Slots (Filaments to load for print) |
+    | :--- | :--- | :--- |
+    | **Plate 1 (Head & Mask)** | Yellow, Black, White, Blue | Slot 1: Yellow, Slot 2: Black, Slot 3: White, Slot 4: Blue |
+    | **Plate 2 (Base & Claws)** | Silver, Red, Dark Grey, Gold | Slot 1: Silver, Slot 2: Red, Slot 3: Dark Grey, Slot 4: Gold |
+
+    *Between plate print jobs, you simply swap the 4 spools on your U1 to match that plate's slot assignments!*
 ---
 
 ## 📦 Project Structure
