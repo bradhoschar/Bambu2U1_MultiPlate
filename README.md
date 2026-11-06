@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/hero_banner.jpg" alt="Bambu2U1 Multi-Plate Hero Banner" width="100%" style="border-radius: 12px; max-width: 900px;" />
+</p>
+
 # ⚡ Bambu2U1 Multi-Plate Converter
 
 > Convert **Bambu Studio / MakerWorld multi-plate 3MF files** into individual, 100% compatible **Snapmaker U1-ready** projects — while preserving multi-color painting, filament colors, auto-centering on the U1 build plate, and eliminating prime tower variable layer height conflicts.
