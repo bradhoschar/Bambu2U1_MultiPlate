@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bambu2U1 Web Application - v1.1.0
+Bambu2U1 Web Application - v2.0.0
 Web UI and REST API for converting Bambu Studio / MakerWorld 3MF projects
 to Snapmaker U1 format with session-isolated uploads.
 """
@@ -17,11 +17,13 @@ import threading
 from flask import Flask, request, jsonify, render_template, send_file
 from werkzeug.utils import secure_filename
 
-from converter import parse_bambu_project, convert_plate_to_u1, convert_all_plates
+from converter import parse_bambu_project, convert_plate_to_u1, convert_all_plates, get_default_templates_dir
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATES_DIR = os.path.join(APP_DIR, "templates")
-UPLOAD_FOLDER = os.path.join(APP_DIR, "uploads")
+TEMPLATES_DIR = get_default_templates_dir()
+if getattr(sys, 'frozen', False):
+    UPLOAD_FOLDER = os.path.join(tempfile.gettempdir(), 'bambu2u1_uploads')
+else:
+    UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 app = Flask(__name__, template_folder=TEMPLATES_DIR)
@@ -146,7 +148,7 @@ def open_browser_when_ready(url):
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Start the Bambu2U1 Web Server - v1.1")
+    parser = argparse.ArgumentParser(description="Start the Bambu2U1 Web Server - v2.0")
     parser.add_argument("--port", type=int, default=5000, help="Web server port (default: 5000)")
     parser.add_argument("--host", default="0.0.0.0", help="Web server host (default: 0.0.0.0)")
     parser.add_argument("--no-browser", action="store_true", help="Do not automatically open the browser")
@@ -154,7 +156,7 @@ def main():
 
     url = f"http://localhost:{args.port}"
     print(f"\n=======================================================")
-    print(f"  Bambu to Snapmaker U1 Multi-Plate Converter v1.1.0")
+    print(f"  Bambu to Snapmaker U1 Multi-Plate Converter v2.0.0")
     print(f"  Web UI running at: {url}")
     print(f"=======================================================\n")
 

@@ -32,7 +32,7 @@ Inspired by [bl2u1](https://bl2u1.nbn.cat/) (created by [josuanbn](https://githu
 
 ## 🌟 Why Bambu2U1 Multi-Plate?
 
-| Feature | Original bl2u1 | **Bambu2U1 Multi-Plate (v1.1)** |
+| Feature | Original bl2u1 | **Bambu2U1 Multi-Plate (v2.0)** |
 | :--- | :---: | :---: |
 | **Single-plate files** | ✅ | ✅ |
 | **Multi-plate projects (e.g. 11 plates)** | ❌ (1 plate only) | ✅ **Full multi-plate support** |
@@ -51,7 +51,7 @@ Inspired by [bl2u1](https://bl2u1.nbn.cat/) (created by [josuanbn](https://githu
 ## 🚀 Quick Start
 
 ### 1. Windows Standalone (No Python or Setup Required)
-1. Download **`Bambu2U1_v1.1.0_Windows.zip`** from [Releases](https://github.com/bradhoschar/Bambu2U1_MultiPlate/releases).
+1. Download **`Bambu2U1_v2.0.0_Windows.zip`** from [Releases](https://github.com/bradhoschar/Bambu2U1_MultiPlate/releases).
 2. Extract the folder anywhere.
 3. Double-click **`Bambu2U1_Converter.exe`** (or `Start_Web_UI.bat`) to launch the web dashboard.
 4. Drag & drop any `.3mf` file directly to convert all plates.

@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
 """
-Bambu2U1 Core Converter Engine - v1.1.0
-Converts Bambu Studio / MakerWorld 3MF projects into Snapmaker U1-compatible 3MF files.
-Preserves filament materials, temperatures, speeds, volumetric flows, custom gcode,
-per-part and triangle paint colors, and dynamically centers plates on the U1 bed.
+Bambu2U1 Core Converter Engine - v2.0.0
+Converts Bambu Studio / MakerWorld multi-plate 3MF projects into Snapmaker U1-compatible 3MF files.
+Features:
+- Full facet paint remapping (vertex/facet paint_color) via high-speed streaming regex engine
+- Complete color discovery across object metadata, part metadata, and mesh paint_color tokens
+- True dynamic 3D vertex bounding-box centroid bed centering
+- Clean metadata (eliminates invalid slice_info plater config & multi-plate assemble offsets)
+- Safe 4-slot extruder clamping (no out-of-bounds extruder crashes in OrcaSlicer)
+- Thermal, volumetric speed, and per-layer custom G-code preservation
+- Prime-tower layer height conflict prevention
 """
 
 import os
+import sys
 import re
 import json
-import base64
 import zipfile
 import posixpath
 import xml.etree.ElementTree as ET
+from collections import Counter
 
 NS_CORE = 'http://schemas.microsoft.com/3dmanufacturing/core/2015/02'
 NS_PROD = 'http://schemas.microsoft.com/3dmanufacturing/production/2015/06'
@@ -21,38 +28,112 @@ NS_BBL  = 'http://schemas.bambulab.com/package/2021'
 NS_MAP  = {'m': NS_CORE, 'p': NS_PROD}
 
 
-def remap_paint_color_string(paint_str, ext_mapping):
-    """
-    Remaps paint_color hex strings (e.g., '5C' -> slot mapping).
-    In Bambu Studio 3MF, paint_color encodes filament indices in hex nibbles followed by run lengths.
-    """
-    if not paint_str or not ext_mapping:
-        return paint_str
+def get_default_templates_dir():
+    """Find the templates directory in standalone bundle, package, or repo."""
+    if getattr(sys, 'frozen', False):
+        base = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(base, "templates"),
+        os.path.join(os.path.dirname(sys.executable), "templates"),
+        r"C:\Users\bradh\Desktop\Bambu2U1_v1.1.0_Windows\templates",
+        r"Z:\Bambu2U1_MultiPlate\Bambu2U1_MultiPlate\templates"
+    ]
+    for c in candidates:
+        if os.path.isdir(c) and os.path.exists(os.path.join(c, 'u1_template.3mf')):
+            return c
+    return os.path.join(base, "templates")
 
-    pattern = re.compile(r'([0-9A-Fa-f]+)(C)?')
-    res = []
-    for m in pattern.finditer(paint_str):
-        token_num_str = m.group(1)
-        suffix = m.group(2) or ''
+
+def remap_paint_color_token(token, ext_mapping):
+    """Remaps a single token (e.g., '8', '5C', 'BC')."""
+    if not token:
+        return token
+    if token.endswith('C') or token.endswith('c'):
+        prefix = token[:-1]
+        suffix = token[-1]
+    else:
+        prefix = token
+        suffix = ''
+    try:
+        val_int = int(prefix, 16)
+        val_str = str(val_int)
+        if val_str in ext_mapping:
+            new_val = int(ext_mapping[val_str])
+            return f"{new_val:X}{suffix}"
+        else:
+            return f"1{suffix}"
+    except ValueError:
+        return token
+
+
+def remap_paint_color_value(paint_val_str, ext_mapping):
+    """Remaps entire paint_color attribute string."""
+    if not paint_val_str or not ext_mapping:
+        return paint_val_str
+
+    def replace_sub(match):
+        tok = match.group(0)
+        return remap_paint_color_token(tok, ext_mapping)
+
+    return re.sub(r'[0-9A-Fa-f](?:[Cc])?', replace_sub, paint_val_str)
+
+
+def remap_model_bytes(model_bytes, ext_mapping):
+    """High-speed binary regex remapping on raw .model file bytes."""
+    if b'paint_color' not in model_bytes:
+        return model_bytes
+
+    def repl(m):
+        attr_val = m.group(1).decode('ascii', errors='ignore')
+        new_val = remap_paint_color_value(attr_val, ext_mapping)
+        return f'paint_color="{new_val}"'.encode('ascii')
+
+    return re.sub(rb'paint_color="([^"]+)"', repl, model_bytes)
+
+
+def extract_extruders_from_bytes(raw_bytes):
+    """Extracts all filament slot indices used in paint_color tokens."""
+    ext_counts = Counter()
+    if b'paint_color' not in raw_bytes:
+        return ext_counts
+
+    for m in re.finditer(rb'paint_color="([^"]+)"', raw_bytes):
+        val = m.group(1).decode('ascii', errors='ignore')
+        if len(val) <= 2 and val.isdigit():
+            v = int(val)
+            if 1 <= v <= 16:
+                ext_counts[v] += 1
+        else:
+            for tm in re.finditer(r'([0-9A-Fa-f])(?:[Cc])?', val):
+                v = int(tm.group(1), 16)
+                if 1 <= v <= 16:
+                    ext_counts[v] += 1
+    return ext_counts
+
+
+def get_mesh_vertex_bounds(mesh_bytes):
+    """Extracts min/max coordinates from .model XML without full DOM construction."""
+    xs, ys, zs = [], [], []
+    for m in re.finditer(rb'<vertex\s+x="([^"]+)"\s+y="([^"]+)"\s+z="([^"]+)"', mesh_bytes):
         try:
-            val_int = int(token_num_str, 16)
-            str_val = str(val_int)
-            if str_val in ext_mapping:
-                new_slot = int(ext_mapping[str_val])
-                res.append(f"{new_slot:X}{suffix}")
-            else:
-                res.append(m.group(0))
+            xs.append(float(m.group(1)))
+            ys.append(float(m.group(2)))
+            zs.append(float(m.group(3)))
         except ValueError:
-            res.append(m.group(0))
-
-    return "".join(res) if res else paint_str
+            pass
+    if not xs:
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    return (min(xs), max(xs), min(ys), max(ys), min(zs), max(zs))
 
 
 def parse_bambu_project(bambu_3mf_path):
     """
     Parses a Bambu Lab / MakerWorld 3MF file.
-    Returns metadata about plates, parts, filaments, and support settings.
+    Returns rich metadata about plates, parts, filaments, and support settings.
     """
+    import base64
     with zipfile.ZipFile(bambu_3mf_path, 'r') as bbl:
         all_files = set(bbl.namelist())
         raw_cfg = bbl.read('Metadata/model_settings.config')
@@ -63,7 +144,7 @@ def parse_bambu_project(bambu_3mf_path):
 
         orig_proj = json.loads(bbl.read('Metadata/project_settings.config').decode('utf-8'))
         orig_colors = orig_proj.get('filament_colour', [])
-        orig_types = orig_proj.get('filament_type', [])
+        orig_types  = orig_proj.get('filament_type', [])
 
         has_support = False
         diff = orig_proj.get('different_settings_to_system', [])
@@ -76,12 +157,33 @@ def parse_bambu_project(bambu_3mf_path):
         if 'enable_support' in orig_proj:
             has_support = str(orig_proj['enable_support']).strip() in ('1', 'true', 'True')
 
+        obj_to_models = {}
+        for obj in m_root.findall('m:resources/m:object', NS_MAP):
+            oid = obj.attrib.get('id')
+            paths = []
+            for comp in obj.findall('m:components/m:component', NS_MAP):
+                p_path = comp.attrib.get(f'{{{NS_PROD}}}path')
+                if p_path:
+                    paths.append(posixpath.normpath(p_path).lstrip('/'))
+            obj_to_models[oid] = paths
+
+        model_ext_cache = {}
+        def get_model_exts(mpath):
+            if mpath in model_ext_cache:
+                return model_ext_cache[mpath]
+            if mpath in all_files:
+                counts = extract_extruders_from_bytes(bbl.read(mpath))
+            else:
+                counts = Counter()
+            model_ext_cache[mpath] = counts
+            return counts
+
         obj_info = {}
         for obj in cfg_root.findall('object'):
             oid = obj.attrib.get('id')
             meta = {m.attrib.get('key'): m.attrib.get('value') for m in obj.findall('metadata')}
             ext = int(meta.get('extruder', 1))
-            
+
             part_exts = set()
             for p in obj.findall('part'):
                 for pm in p.findall('metadata'):
@@ -90,7 +192,7 @@ def parse_bambu_project(bambu_3mf_path):
                             part_exts.add(int(pm.attrib.get('value')))
                         except:
                             pass
-            
+
             obj_info[oid] = {
                 'name': meta.get('name', f'Object_{oid}'),
                 'extruder': ext,
@@ -110,12 +212,22 @@ def parse_bambu_project(bambu_3mf_path):
                         plate_objs.append(m.attrib.get('value'))
 
             used_extruders = set()
+            paint_counts = Counter()
+
             for oid in plate_objs:
                 if oid in obj_info:
                     used_extruders.add(obj_info[oid]['extruder'])
                     used_extruders.update(obj_info[oid]['part_extruders'])
+                for mpath in obj_to_models.get(oid, []):
+                    c = get_model_exts(mpath)
+                    paint_counts.update(c)
+                    used_extruders.update(c.keys())
 
-            sorted_exts = sorted(list(used_extruders))
+            sorted_exts = []
+            for e in sorted(list(used_extruders)):
+                if e not in sorted_exts:
+                    sorted_exts.append(e)
+
             if not sorted_exts:
                 sorted_exts = [1]
 
@@ -127,7 +239,8 @@ def parse_bambu_project(bambu_3mf_path):
                 plate_filaments.append({
                     'original_slot': ext,
                     'color': c,
-                    'type': t
+                    'type': t,
+                    'faces_painted': paint_counts.get(ext, 0)
                 })
 
             thumb_b64 = ""
@@ -154,11 +267,14 @@ def parse_bambu_project(bambu_3mf_path):
     }
 
 
-def convert_plate_to_u1(bambu_3mf_path, pid, output_3mf_path, templates_dir, custom_mapping=None):
+def convert_plate_to_u1(bambu_3mf_path, pid, output_3mf_path, templates_dir=None, custom_mapping=None):
     """
     Converts a single plate from a Bambu 3MF file to a Snapmaker U1 ready 3MF file.
-    Preserves all source project print settings, material temps, speeds, and layer gcodes.
+    v2.0 engine: true vertex centering, clean metadata, safe slot clamping, fast binary remapping.
     """
+    if not templates_dir:
+        templates_dir = get_default_templates_dir()
+
     tmpl_no_supp = os.path.join(templates_dir, 'u1_template.3mf')
     tmpl_supp    = os.path.join(templates_dir, 'u1_template_supports.3mf')
 
@@ -211,6 +327,26 @@ def convert_plate_to_u1(bambu_3mf_path, pid, output_3mf_path, templates_dir, cus
             if m.attrib['key'] == 'object_id':
                 plate_objs.add(m.attrib['value'])
 
+    ET.register_namespace('', NS_CORE)
+    ET.register_namespace('p', NS_PROD)
+    ET.register_namespace('BambuStudio', NS_BBL)
+    m_tree = ET.fromstring(raw_model)
+
+    obj_components = {}
+    needed_models = set()
+    for obj in m_tree.findall('m:resources/m:object', NS_MAP):
+        oid = obj.attrib.get('id')
+        comps = []
+        for comp in obj.findall('m:components/m:component', NS_MAP):
+            p_path = comp.attrib.get(f'{{{NS_PROD}}}path')
+            if p_path:
+                safe_p = posixpath.normpath(p_path).lstrip('/')
+                ctf = [float(x) for x in comp.attrib.get('transform', '1 0 0 0 1 0 0 0 1 0 0 0').split()]
+                comps.append((safe_p, ctf))
+                if oid in plate_objs:
+                    needed_models.add(safe_p)
+        obj_components[oid] = comps
+
     used_extruders = set()
     for obj in cfg_root.findall('object'):
         if obj.attrib.get('id') in plate_objs:
@@ -228,6 +364,13 @@ def convert_plate_to_u1(bambu_3mf_path, pid, output_3mf_path, templates_dir, cus
                         except:
                             pass
 
+    with zipfile.ZipFile(bambu_3mf_path, 'r') as bbl:
+        for mpath in needed_models:
+            if mpath in all_bbl_files:
+                raw_m = bbl.read(mpath)
+                c_exts = extract_extruders_from_bytes(raw_m)
+                used_extruders.update(c_exts.keys())
+
     sorted_exts = sorted(list(used_extruders))
     if not sorted_exts:
         sorted_exts = [1]
@@ -242,54 +385,73 @@ def convert_plate_to_u1(bambu_3mf_path, pid, output_3mf_path, templates_dir, cus
                 ext_mapping[old_str] = str(new_s)
                 source_ext_for_slot[new_s - 1] = int(old_str) - 1
     else:
-        for new_slot, old_ext in enumerate(sorted_exts[:4], start=1):
-            ext_mapping[str(old_ext)] = str(new_slot)
-            source_ext_for_slot[new_slot - 1] = old_ext - 1
+        for slot_idx, old_ext in enumerate(sorted_exts[:4], start=1):
+            ext_mapping[str(old_ext)] = str(slot_idx)
+            source_ext_for_slot[slot_idx - 1] = old_ext - 1
+        for old_ext in sorted_exts[4:]:
+            ext_mapping[str(old_ext)] = "4"
 
     fallback_idx = source_ext_for_slot.get(0, 0)
     for s_idx in range(4):
         if s_idx not in source_ext_for_slot:
             source_ext_for_slot[s_idx] = fallback_idx
 
-    ET.register_namespace('', NS_CORE)
-    ET.register_namespace('p', NS_PROD)
-    ET.register_namespace('BambuStudio', NS_BBL)
-    m_tree = ET.fromstring(raw_model)
-
+    # Center objects on U1 bed (270x270 mm, center at 135, 135)
     build_elem = m_tree.find('m:build', NS_MAP)
     plate_items_tf = []
     for item in list(build_elem):
         oid = item.attrib.get('objectid')
         if oid in plate_objs:
             tf = [float(x) for x in item.attrib['transform'].split()]
-            plate_items_tf.append((item, tf))
+            plate_items_tf.append((item, oid, tf))
         else:
             build_elem.remove(item)
 
-    if plate_items_tf:
-        xs = [tf[9] for _, tf in plate_items_tf]
-        ys = [tf[10] for _, tf in plate_items_tf]
+    with zipfile.ZipFile(bambu_3mf_path, 'r') as bbl:
+        all_vx, all_vy = [], []
+        for item, oid, btf in plate_items_tf:
+            for mpath, ctf in obj_components.get(oid, []):
+                if mpath in all_bbl_files:
+                    minx, maxx, miny, maxy, minz, maxz = get_mesh_vertex_bounds(bbl.read(mpath))
+                    corners = [
+                        (minx, miny, minz), (minx, miny, maxz), (minx, maxy, minz), (minx, maxy, maxz),
+                        (maxx, miny, minz), (maxx, miny, maxz), (maxx, maxy, minz), (maxx, maxy, maxz),
+                    ]
+                    for x, y, z_val in corners:
+                        cx_val = ctf[0]*x + ctf[1]*y + ctf[2]*z_val + ctf[9]
+                        cy_val = ctf[3]*x + ctf[4]*y + ctf[5]*z_val + ctf[10]
+                        cz_val = ctf[6]*x + ctf[7]*y + ctf[8]*z_val + ctf[11]
+
+                        wx = btf[0]*cx_val + btf[1]*cy_val + btf[2]*cz_val + btf[9]
+                        wy = btf[3]*cx_val + btf[4]*cy_val + btf[5]*cz_val + btf[10]
+                        all_vx.append(wx)
+                        all_vy.append(wy)
+
+    if all_vx and all_vy:
+        cx = (min(all_vx) + max(all_vx)) / 2.0
+        cy = (min(all_vy) + max(all_vy)) / 2.0
+        dx = cx - 135.0
+        dy = cy - 135.0
+        for item, oid, tf in plate_items_tf:
+            tf[9] = round(tf[9] - dx, 6)
+            tf[10] = round(tf[10] - dy, 6)
+            item.attrib['transform'] = " ".join(str(v) for v in tf)
+    elif plate_items_tf:
+        xs = [tf[9] for _, _, tf in plate_items_tf]
+        ys = [tf[10] for _, _, tf in plate_items_tf]
         cx = (min(xs) + max(xs)) / 2.0
         cy = (min(ys) + max(ys)) / 2.0
         dx = cx - 135.0
         dy = cy - 135.0
-        for item, tf in plate_items_tf:
+        for item, _, tf in plate_items_tf:
             tf[9] = round(tf[9] - dx, 6)
             tf[10] = round(tf[10] - dy, 6)
             item.attrib['transform'] = " ".join(str(v) for v in tf)
-    else:
-        dx, dy = 0.0, 0.0
 
-    needed_models = set()
     res_elem = m_tree.find('m:resources', NS_MAP)
     for obj in list(res_elem):
         oid = obj.attrib.get('id')
-        if oid in plate_objs:
-            for comp in obj.findall('m:components/m:component', NS_MAP):
-                p_path = comp.attrib.get(f'{{{NS_PROD}}}path')
-                if p_path:
-                    needed_models.add(p_path)
-        else:
+        if oid not in plate_objs:
             res_elem.remove(obj)
 
     base_name = os.path.splitext(os.path.basename(bambu_3mf_path))[0]
@@ -308,7 +470,8 @@ def convert_plate_to_u1(bambu_3mf_path, pid, output_3mf_path, templates_dir, cus
     ET.register_namespace('', NS_REL)
     r_tree = ET.fromstring(raw_rels)
     for rel in list(r_tree):
-        if rel.attrib.get('Target') not in needed_models:
+        target = posixpath.normpath(rel.attrib.get('Target', '')).lstrip('/')
+        if target not in needed_models:
             r_tree.remove(rel)
     rels_out = ET.tostring(r_tree, encoding='utf-8', xml_declaration=True)
 
@@ -337,6 +500,10 @@ def convert_plate_to_u1(bambu_3mf_path, pid, output_3mf_path, templates_dir, cus
                 k = m.attrib.get('key')
                 if k == 'plater_id':
                     m.attrib['value'] = '1'
+                elif k == 'filament_maps':
+                    m.attrib['value'] = '1 1 1 1'
+                elif k == 'filament_volume_maps':
+                    m.attrib['value'] = '0 0 0 0'
                 elif k == 'thumbnail_file':
                     m.attrib['value'] = 'Metadata/plate_1.png'
                 elif k == 'thumbnail_no_light_file':
@@ -350,13 +517,11 @@ def convert_plate_to_u1(bambu_3mf_path, pid, output_3mf_path, templates_dir, cus
 
     assemble_elem = c_tree.find('assemble')
     if assemble_elem is not None:
-        for a_item in list(assemble_elem):
-            if a_item.attrib.get('object_id') not in plate_objs:
-                assemble_elem.remove(a_item)
+        c_tree.remove(assemble_elem)
+
     cfg_out = ET.tostring(c_tree, encoding='utf-8', xml_declaration=True)
 
     final_proj = orig_proj.copy()
-
     machine_override_keys = [
         'printer_model', 'printer_settings_id', 'printer_technology', 'printer_structure',
         'printer_variant', 'printable_area', 'machine_start_gcode', 'machine_end_gcode',
@@ -385,26 +550,17 @@ def convert_plate_to_u1(bambu_3mf_path, pid, output_3mf_path, templates_dir, cus
                         new_list.append(val[-1])
                 final_proj[key] = new_list
 
-    slot_colors = [final_proj.get('filament_colour', ['#FFFFFFFF']*4)[i] for i in range(4)]
-    slot_types  = [final_proj.get('filament_type', ['PLA']*4)[i] for i in range(4)]
-
     proj_bytes = json.dumps(final_proj, indent=4, ensure_ascii=False).encode('utf-8')
 
-    slice_info_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    # Standard clean unsliced slice_info.config (NO <plate> element)
+    slice_info_bytes = """<?xml version="1.0" encoding="UTF-8"?>
 <config>
   <header>
     <header_item key="X-BBL-Client-Type" value="slicer"/>
     <header_item key="X-BBL-Client-Version" value=""/>
   </header>
-  <plate>
-    <metadata key="printer_model_id" value="Snapmaker U1"/>
-"""
-    for slot_num, (c, t) in enumerate(zip(slot_colors, slot_types), start=1):
-        slice_info_xml += f'    <filament id="{slot_num}" type="{t}" color="{c}" used_m="0" used_g="0"/>\n'
-    slice_info_xml += """  </plate>
 </config>
-"""
-    slice_info_bytes = slice_info_xml.encode('utf-8')
+""".encode('utf-8')
 
     os.makedirs(os.path.dirname(os.path.abspath(output_3mf_path)), exist_ok=True)
     with zipfile.ZipFile(bambu_3mf_path, 'r') as bbl, \
@@ -419,17 +575,7 @@ def convert_plate_to_u1(bambu_3mf_path, pid, output_3mf_path, templates_dir, cus
             safe_name = posixpath.normpath(mpath).lstrip('/')
             if safe_name in all_bbl_files:
                 raw_comp = bbl.read(safe_name)
-                try:
-                    comp_root = ET.fromstring(raw_comp)
-                    modified_comp = False
-                    for el in comp_root.iter():
-                        if 'paint_color' in el.attrib:
-                            el.attrib['paint_color'] = remap_paint_color_string(el.attrib['paint_color'], ext_mapping)
-                            modified_comp = True
-                    if modified_comp:
-                        raw_comp = ET.tostring(comp_root, encoding='utf-8', xml_declaration=True)
-                except Exception:
-                    pass
+                raw_comp = remap_model_bytes(raw_comp, ext_mapping)
                 zout.writestr(safe_name, raw_comp)
 
         zout.writestr('Metadata/model_settings.config', cfg_out)
@@ -453,8 +599,11 @@ def convert_plate_to_u1(bambu_3mf_path, pid, output_3mf_path, templates_dir, cus
     return output_3mf_path
 
 
-def convert_all_plates(bambu_3mf_path, output_dir, templates_dir, progress_callback=None):
+def convert_all_plates(bambu_3mf_path, output_dir, templates_dir=None, progress_callback=None):
     """Converts all plates found in a Bambu 3MF file to Snapmaker U1."""
+    if not templates_dir:
+        templates_dir = get_default_templates_dir()
+
     meta = parse_bambu_project(bambu_3mf_path)
     os.makedirs(output_dir, exist_ok=True)
     base_name = os.path.splitext(os.path.basename(bambu_3mf_path))[0]
@@ -474,7 +623,7 @@ def convert_all_plates(bambu_3mf_path, output_dir, templates_dir, progress_callb
 
 if __name__ == '__main__':
     import argparse
-    parser = argparse.ArgumentParser(description="Convert Bambu Studio 3MF to Snapmaker U1 - v1.1")
+    parser = argparse.ArgumentParser(description="Convert Bambu Studio 3MF to Snapmaker U1 - v2.0")
     parser.add_argument("file", help="Path to Bambu .3mf project file")
     parser.add_argument("-o", "--output", help="Output directory (default: [filename]_U1_Ready)")
     args = parser.parse_args()
@@ -485,9 +634,9 @@ if __name__ == '__main__':
         sys.exit(1)
 
     out_dir = os.path.abspath(args.output) if args.output else os.path.join(os.path.dirname(file_path), f"{os.path.splitext(os.path.basename(file_path))[0]}_U1_Ready")
-    tmpl_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+    tmpl_dir = get_default_templates_dir()
 
-    print(f"Converting '{os.path.basename(file_path)}' to Snapmaker U1 (v1.1 Engine)...")
+    print(f"Converting '{os.path.basename(file_path)}' to Snapmaker U1 (v2.0 Engine)...")
     def print_progress(idx, total, fpath):
         print(f"  [{idx}/{total}] Generated {os.path.basename(fpath)}")
 
